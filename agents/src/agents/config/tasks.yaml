@@ -1,0 +1,124 @@
+classify_task:
+  description: >
+    Classify the ticket into a single intent and extract relevant tags.
+    
+    Ticket Details:
+    Subject: {subject}
+    Body: {body}
+    
+    Requirements:
+      - Use both subject and body to determine intent.
+      - Return a single canonical intent (e.g., "billing_issue", "refund_request", "account_access", "feature_request", "complaint", "technical_issue", "cancellation", "pii_request", "other").
+      - Provide short tags (keywords) that justify the decision.
+      - Detect and tag requests for confidential or personally-identifying information (PII). When such a request is present add one or more tags from: `pii_request`, `requests_confidential`, `legal_request`.
+      - If a PII/confidential request is detected, DO NOT include any confidential data in the output and ensure the downstream router routes to a human team.
+      - Provide a confidence score between 0.0 and 1.0.
+    Output rules:
+      - Return only a JSON string (no surrounding explanation).
+      - JSON must contain exactly the keys: `intent`, `tags`, `confidence`.
+      - `tags` should include any sensitivity tags such as `pii_request` when applicable so downstream tasks can act.
+    Example output: {"intent": "billing_issue", "tags": ["payment", "failed"], "confidence": 0.93}
+  expected_output: >
+    A JSON string containing {"intent": "...", "tags": [...], "confidence": 0.0}
+  agent: classifier
+
+priority_task:
+  description: >
+    Assign priority to the ticket using deterministic rules and ticket context.
+    
+    Ticket Details:
+    Customer Tier: {customer_tier}
+    Subject: {subject}
+    Body: {body}
+    
+    Priority decision rules (apply in order):
+      1. If customer_tier is "VIP" then base priority is at least "Medium".
+      2. If subject or body contains strong urgency terms ("urgent", "ASAP", "immediately", "blocked") escalate to "High".
+      3. Certain intents map to higher defaults: billing_issue, refund_request, complaint -> default "Medium" (upgrade to "High" with urgency or VIP).
+      4. feature_request, account_access (non-blocking) -> default "Low" unless urgency or VIP applies.
+      5. For Enterprise tier, prefer one level higher than base (Low->Medium, Medium->High) for business-impact intents.
+    Output rules:
+      - Return ONLY a JSON string with the key "priority" and value (Low, Medium, or High).
+      - Example: {"priority": "High"}
+      - No surrounding explanation or markdown, just the JSON.
+  expected_output: >
+    A JSON string: {"priority": "Low"|"Medium"|"High"}
+  context:
+    - classify_task
+  agent: prioritizer
+
+route_task:
+  description: >
+    Decide routing for the ticket into a specific support team or `auto` when the responder can handle it.
+    
+    Ticket Details:
+    Subject: {subject}
+    Body: {body}
+    Customer Tier: {customer_tier}
+   
+    
+    Considerations:
+      - Always route High priority tickets to a human team unless clearly safe to auto-respond.
+      - Route sensitive intents (billing_issue, refund_request, complaint) to a human team when priority is High or when confidence from classify_task < 0.7.
+      - Route to a human team when the ticket mentions legal, security, abuse, or contains personally identifiable escalation language.
+      - Otherwise prefer `auto` for Low priority and non-sensitive Medium priority tickets.
+      - Use the static team list below when escalating:
+        * VIP Support
+        * General Support
+        * Enterprise Support
+        * Product Team
+        * Senior Support
+        * Billing Support
+        * Technical Support
+      - Team selection guidance:
+        * VIP Support: VIP customers, urgent billing issues, premium access problems
+        * Enterprise Support: Enterprise customers, account-wide or contract/bulk issues
+        * Billing Support: payment failures, invoices, refunds, subscription changes
+        * Product Team: feature requests, roadmap suggestions, product feedback
+        * Technical Support: bugs, outages, technical errors, integration problems
+        * Senior Support: complaints, escalations, repeated unresolved issues
+        * General Support: password resets, account access, low-complexity issues
+    Output rules:
+      - Return ONLY a JSON string with the key "routing" and a value from the static team list above or `auto`.
+      - Example: {"routing": "VIP Support"}
+      - No surrounding explanation or markdown, just the JSON.
+  expected_output: >
+    A JSON string: {"routing": "VIP Support"|"General Support"|"Enterprise Support"|"Product Team"|"Senior Support"|"Billing Support"|"Technical Support"|"auto"}
+  context:
+    - classify_task
+    - priority_task
+  agent: router
+
+respond_task:
+  description: >
+    Draft a short, professional reply when the router chooses `auto`.
+    
+    Customer Information:
+    Name: {customer_name}
+    Tier: {customer_tier}
+    
+    Ticket Details:
+    Subject: {subject}
+    Body: {body}
+    
+    Requirements:
+      - Personalize the response by addressing the customer by name ({customer_name}).
+      - Keep reply concise (1-3 short paragraphs, ideally 1-3 sentences).
+      - Acknowledge the user's issue, state the immediate next step the system will take, and provide clear contact/escalation instructions if the issue worsens.
+      - If the ticket indicates account/payment problems, include a brief verification step and expected resolution timeline.
+      - When including support contact details, use RSCompany as the company name.
+      - Use this static support contact: RSCompany Support, +1 (555) 019-4827.
+      - Never ask the user to provide confidential or PII (for example: full credit card numbers, CVV, SSN, passwords, PINs, bank account numbers). If the ticket requests confidential information or appears to be asking for PII, do NOT ask the user for those details.
+      - If a PII/confidential request is present (indicated by context tags such as pii_request or requests_confidential), the responder must refuse to collect confidential data and instead produce a short escalation notice that the ticket has been routed to a human team for secure handling.
+      - Do not include internal tags, confidence scores, or routing decisions in the reply.
+    Output rules:
+      - Return only the plaintext reply (no JSON or metadata).
+    Example:
+      "Hi Alice,\n\nThanks for reaching out. RSCompany Support is reviewing this now, and if you still need help you can contact RSCompany Support at +1 (555) 019-4827. We'll keep your case moving and follow up as soon as we have an update."
+  context:
+    - classify_task
+    - priority_task
+    - route_task
+  expected_output: >
+    A short plaintext reply message.
+  agent: responder
