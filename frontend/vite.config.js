@@ -8,6 +8,6 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     // For local dev, base stays '/'. For GitHub Pages, set VITE_GITHUB_PAGES=true.
-    base: env.VITE_GITHUB_PAGES === 'true' ? '/customer-support-escalation-router/' : '/',
+     base: env.GITHUB_PAGES === 'true' ? '/Customer-Support-Escalation-Router/' : '/',
   }
 })
