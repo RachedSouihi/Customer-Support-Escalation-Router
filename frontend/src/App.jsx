@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 import Header from "./components/Header";
 import TicketForm from "./components/TicketInputs";
@@ -13,6 +13,7 @@ function App() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
 
   const handleAnalyze = async () => {
     if (!ticket.body.trim()) {
